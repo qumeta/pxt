@@ -387,6 +387,14 @@ To render one or more code cards as JSON into cards, use **codecard**.
     }]
     ```
 
+### apis
+
+Render all blocks from a given set of namespaces as code cards.
+
+    ```apis
+    basic
+    ```
+
 ### ignore #ignore
 
 Append `-ignore` to any of the above to ignore a snippet in automated testing:
@@ -414,4 +422,15 @@ You can use `typescript-valid` to showcase typescript that is **correct**:
     ```typescript-valid
     // You can include any TS in here, e.g. to showcase correct syntax
     callFunction();
+    ```
+
+### @highlight
+
+The render will higlight the next line or block following a 
+comment with **@highlight**.
+
+    ```blocks
+    console.log(":)")
+    // @highlight
+    console.log(":(")
     ```

@@ -2465,15 +2465,21 @@ export class ProjectView
 
     toggleTrace(intervalSpeed?: number) {
         const tracing = !!this.state.tracing;
-        const debugging = !!this.state.debugging;
         if (tracing) {
             this.editor.clearHighlightedStatements();
             simulator.setTraceInterval(0);
         } else {
             simulator.setTraceInterval(intervalSpeed || simulator.SLOW_TRACE_INTERVAL);
         }
-        this.setState({ tracing: !tracing, debugging: debugging && !tracing },
-            () => this.restartSimulator())
+        this.setState({ tracing: !tracing },
+            () => {
+                if (this.state.debugging) {
+                    this.onDebuggingStart();
+                }
+                else {
+                    this.restartSimulator();
+                }
+            })
     }
 
     setTrace(enabled: boolean, intervalSpeed?: number) {
@@ -2624,7 +2630,7 @@ export class ProjectView
     restartSimulator() {
         const isDebug = this.state.tracing || this.state.debugging;
         if (this.state.simState == pxt.editor.SimState.Stopped
-            || simulator.driver.isDebug() != !!isDebug) {
+            || this.debugOptionsChanged()) {
             this.startSimulator();
         } else {
             simulator.driver.stopSound();
@@ -2638,8 +2644,7 @@ export class ProjectView
 
     startSimulator(opts?: pxt.editor.SimulatorStartOptions) {
         pxt.tickEvent('simulator.start');
-        const isDebug = this.state.debugging || this.state.tracing;
-        const isDebugMatch = simulator.driver.isDebug() == isDebug;
+        const isDebugMatch = !this.debugOptionsChanged();
         const clickTrigger = opts && opts.clickTrigger;
         pxt.debug(`start sim (autorun ${this.state.autoRun})`)
         if (!this.shouldStartSimulator() && isDebugMatch) {
@@ -2647,7 +2652,13 @@ export class ProjectView
             return Promise.resolve();
         }
         return this.saveFileAsync()
-            .then(() => this.runSimulator({ debug: isDebug, clickTrigger }))
+            .then(() => this.runSimulator({ debug: this.state.debugging, clickTrigger }))
+    }
+
+    debugOptionsChanged() {
+        const { debugging, tracing } = this.state;
+
+        return (!!debugging != simulator.driver.isDebug()) || (!!tracing != simulator.driver.isTracing())
     }
 
     stopSimulator(unload?: boolean, opts?: pxt.editor.SimulatorStartOptions) {
@@ -2732,7 +2743,7 @@ export class ProjectView
                                 clickTrigger: opts.clickTrigger,
                                 storedState: pkg.mainEditorPkg().getSimState(),
                                 autoRun: this.state.autoRun
-                            })
+                            }, opts.trace)
                             this.blocksEditor.setBreakpointsMap(resp.breakpoints);
                             this.textEditor.setBreakpointsMap(resp.breakpoints);
                             if (!cancellationToken.isCancelled()) {
@@ -2757,14 +2768,15 @@ export class ProjectView
         })();
     }
 
-    openDependentEditor(hd: pxt.workspace.Header) {
+    openNewTab(hd: pxt.workspace.Header, dependent: boolean) {
         if (!hd
             || pxt.BrowserUtils.isElectron()
             || pxt.BrowserUtils.isUwpEdge()
             || pxt.BrowserUtils.isIOS())
             return;
         let url = window.location.href.replace(/#.*$/, '');
-        url = url + (url.indexOf('?') > -1 ? '&' : '?') + "nestededitorsim=1&lockededitor=1";
+        if (dependent)
+            url = url + (url.indexOf('?') > -1 ? '&' : '?') + "nestededitorsim=1&lockededitor=1";
         url += "#header:" + hd.id;
         const w = window.open(url, pxt.appTarget.id + hd.id);
         if (w) {
@@ -2810,14 +2822,18 @@ export class ProjectView
 
     toggleDebugging() {
         const state = !this.state.debugging;
-        this.setState({ debugging: state, tracing: false }, () => {
-            this.renderCore()
-            if (this.editor) {
-                this.editor.updateBreakpoints();
-                this.editor.updateToolbox();
-            }
-            this.restartSimulator();
+        this.setState({ debugging: state }, () => {
+            this.onDebuggingStart();
         });
+    }
+
+    protected onDebuggingStart() {
+        this.renderCore()
+        if (this.editor) {
+            this.editor.updateBreakpoints();
+            this.editor.updateToolbox();
+        }
+        this.restartSimulator();
     }
 
     dbgPauseResume() {
@@ -3013,9 +3029,7 @@ export class ProjectView
     }
 
     showShareDialog(title?: string) {
-        const header = this.state.header;
-        if (header)
-            this.shareEditor.show(header, title);
+        this.shareEditor.show(title);
     }
 
     showLanguagePicker() {
@@ -3471,6 +3485,19 @@ export class ProjectView
         pxt.tickEvent("app.greenscreen", { on: greenScreenOn ? 1 : 0 });
         this.setState({ greenScreen: greenScreenOn });
     }
+
+    toggleAccessibleBlocks() {
+        const accessibleBlocksOn = !this.state.accessibleBlocks;
+        if (accessibleBlocksOn) {
+            Blockly.navigation.enableKeyboardAccessibility();
+        } else {
+            Blockly.navigation.disableKeyboardAccessibility();
+        }
+
+        pxt.tickEvent("app.accessibleblocks", { on: accessibleBlocksOn ? 1 : 0 });
+        this.setState({ accessibleBlocks: accessibleBlocksOn });
+    }
+
 
     setBannerVisible(b: boolean) {
         this.setState({ bannerVisible: b });

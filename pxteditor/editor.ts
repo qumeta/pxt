@@ -81,6 +81,7 @@ namespace pxt.editor {
         highContrast?: boolean;
         print?: boolean;
         greenScreen?: boolean;
+        accessibleBlocks?: boolean;
 
         home?: boolean;
         hasError?: boolean;
@@ -280,6 +281,7 @@ namespace pxt.editor {
 
         toggleHighContrast(): void;
         toggleGreenScreen(): void;
+        toggleAccessibleBlocks(): void;
         pair(): void;
         launchFullEditor(): void;
 
@@ -324,7 +326,7 @@ namespace pxt.editor {
         pushScreenshotHandler(handler: (msg: ScreenshotData) => void): void;
         popScreenshotHandler(): void;
 
-        openDependentEditor(header: pxt.workspace.Header): void;
+        openNewTab(header: pxt.workspace.Header, dependent: boolean): void;
         createGitHubRepositoryAsync(): Promise<void>;
     }
 
