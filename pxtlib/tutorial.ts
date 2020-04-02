@@ -13,7 +13,10 @@ namespace pxt.tutorial {
         const { code, templateCode, editor, language } = computeBodyMetadata(body);
 
         if (!metadata.noDiffs
-            && (editor != pxt.BLOCKS_PROJECT_NAME || pxt.appTarget.appTheme.tutorialBlocksDiff)
+            && (
+                (editor == pxt.BLOCKS_PROJECT_NAME && pxt.appTarget.appTheme.tutorialBlocksDiff)  //blocks enabled always
+                || (editor != pxt.BLOCKS_PROJECT_NAME && pxt.appTarget.appTheme.tutorialTextDiff) // text enabled always
+            )
         )
             diffify(steps, activities);
 
@@ -39,7 +42,7 @@ namespace pxt.tutorial {
     function computeBodyMetadata(body: string) {
         // collect code and infer editor
         let editor: string = undefined;
-        const regex = /```(sim|block|blocks|filterblocks|spy|ghost|typescript|ts|js|javascript|template|python)?\s*\n([\s\S]*?)\n```/gmi;
+        const regex = /``` *(sim|block|blocks|filterblocks|spy|ghost|typescript|ts|js|javascript|template|python)?\s*\n([\s\S]*?)\n```/gmi;
         let code = '';
         let templateCode: string;
         let language: string;
