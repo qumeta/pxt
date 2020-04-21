@@ -80,6 +80,16 @@ export class Editor extends toolboxeditor.ToolboxEditor {
         simulator.driver.setBreakpoints([]);
     }
 
+    handleKeyDown = (e: any) => {
+        if (this.parent.state?.accessibleBlocks) {
+            let charCode = (typeof e.which == "number") ? e.which : e.keyCode
+            if (charCode === 84 /* T Key */) { // SHAKAO check if blocks accessibility on
+                this.focusToolbox();
+                e.stopPropagation();
+            }
+        }
+    }
+
     setVisible(v: boolean) {
         super.setVisible(v);
         this.isVisible = v;
@@ -393,6 +403,27 @@ export class Editor extends toolboxeditor.ToolboxEditor {
         };
     }
 
+    private initAccessibleBlocks() {
+        const enabled = pxt.appTarget.appTheme?.accessibleBlocks;
+        // Append listener to open toolbox on 'T' key if accessible blocks is enabled
+        if (enabled) {
+            document.querySelector("#blocksEditor").addEventListener("keydown", this.handleKeyDown)
+        }
+
+        const self = this;
+        const onBlocklyAction = Blockly.navigation.onBlocklyAction;
+        Blockly.navigation.onBlocklyAction = function (action) {
+            if (pxt.appTarget.appTheme?.accessibleBlocks) {
+                if (!self.editor.keyboardAccessibilityMode &&
+                    (action as any).name === Blockly.navigation.actionNames.TOGGLE_KEYBOARD_NAV) {
+                    self.parent.setState({ accessibleBlocks: true });
+                }
+                return onBlocklyAction(action);
+            }
+            return false;
+        };
+    }
+
     private reportDeprecatedBlocks() {
         const deprecatedMap: pxt.Map<number> = {};
         let deprecatedBlocksFound = false;
@@ -517,7 +548,9 @@ export class Editor extends toolboxeditor.ToolboxEditor {
         this.initPrompts();
         this.initBlocklyToolbox();
         this.initWorkspaceSounds();
+        this.initAccessibleBlocks();
         this.resize();
+
         pxt.perf.measureEnd("prepareBlockly")
     }
 
@@ -640,6 +673,20 @@ export class Editor extends toolboxeditor.ToolboxEditor {
 
     handleDebuggerToolboxRef = (c: DebuggerToolbox) => {
         this.debuggerToolbox = c;
+    }
+
+    public moveFocusToFlyout() {
+        const flyout = this.editor.toolbox_.getFlyout();
+        if (flyout && this.parent.state?.accessibleBlocks) {
+            (Blockly.navigation as any).focusFlyout_();
+            flyout.svgGroup_.focus();
+        }
+    }
+
+    focusToolbox() {
+        if (this.toolbox) {
+            this.toolbox.focus();
+        }
     }
 
     renderToolbox(immediate?: boolean) {
@@ -778,7 +825,8 @@ export class Editor extends toolboxeditor.ToolboxEditor {
                 this.typeScriptSaveable = false;
                 this.setDiagnostics(file)
                 this.delayLoadXml = file.content;
-                pxt.blocks.clearWithoutEvents(this.editor);
+                // serial editor is more like an overlay than a custom editor, so preserve blocks undo stack
+                if (!this.parent.shouldPreserveUndoStack()) pxt.blocks.clearWithoutEvents(this.editor);
                 this.closeFlyout();
 
                 this.filterToolbox();
@@ -1443,6 +1491,7 @@ export class Editor extends toolboxeditor.ToolboxEditor {
             }
 
             newFlyout.scrollToStart();
+            if (this.parent.state?.accessibleBlocks) newFlyout.svgGroup_.focus();
         } else if ((this.editor as any).flyout_) {
             (this.editor as any).flyout_.show(xmlList);
             (this.editor as any).flyout_.scrollToStart();

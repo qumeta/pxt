@@ -265,6 +265,7 @@ namespace pxt.editor {
 
         setBannerVisible(b: boolean): void;
         typecheckNow(): void;
+        shouldPreserveUndoStack(): boolean;
 
         openExtension(extension: string, url: string, consentRequired?: boolean): void;
         handleExtensionRequest(request: ExtensionRequest): void;
@@ -282,7 +283,7 @@ namespace pxt.editor {
         toggleHighContrast(): void;
         toggleGreenScreen(): void;
         toggleAccessibleBlocks(): void;
-        pair(): void;
+        setAccessibleBlocks(enabled: boolean): void;
         launchFullEditor(): void;
 
         settings: EditorSettings;
@@ -317,7 +318,9 @@ namespace pxt.editor {
         showPackageDialog(): void;
         showBoardDialogAsync(features?: string[], closeIcon?: boolean): Promise<void>;
         checkForHwVariant(): boolean;
-        pair(): Promise<void>;
+        pairAsync(): Promise<void>;
+        connectAsync(): Promise<void>;
+        disconnectAsync(): Promise<void>;
 
         showModalDialogAsync(options: ModalDialogOptions): Promise<void>;
 
@@ -374,10 +377,13 @@ namespace pxt.editor {
         deployAsync?: (r: pxtc.CompileResult) => Promise<void>;
         saveOnlyAsync?: (r: ts.pxtc.CompileResult) => Promise<void>;
         saveProjectAsync?: (project: pxt.cpp.HexFile) => Promise<void>;
+        renderBrowserDownloadInstructions?: () => any /* JSX.Element */;
+        renderUsbPairDialog?: (firmwareUrl?: string, failedOnce?: boolean) => any /* JSX.Element */;
         showUploadInstructionsAsync?: (fn: string, url: string, confirmAsync: (options: any) => Promise<number>) => Promise<void>;
         toolboxOptions?: IToolboxOptions;
         blocklyPatch?: (pkgTargetVersion: string, dom: Element) => void;
-        webUsbPairDialogAsync?: (confirmAsync: (options: any) => Promise<number>) => Promise<number>;
+        webUsbPairDialogAsync?: (pairAsync: () => Promise<boolean>, confirmAsync: (options: any) => Promise<number>) => Promise<number>;
+        mkPacketIOWrapper?: (io: pxt.packetio.PacketIO) => pxt.packetio.PacketIOWrapper;
 
         // Used with the @tutorialCompleted macro. See docs/writing-docs/tutorials.md for more info
         onTutorialCompleted?: () => void;

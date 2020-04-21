@@ -23,8 +23,6 @@ declare namespace pxt {
         // localized galleries
         localizedGalleries?: pxt.Map<pxt.Map<string>>;
         windowsStoreLink?: string;
-        // link to the latest firmware urls (boardid -> url)
-        firmwareUrls?: pxt.Map<string>;
         // release manifest for the electron app
         electronManifest?: pxt.electron.ElectronManifest;
     }
@@ -366,7 +364,6 @@ declare namespace pxt {
         simGifQuality?: number; // generated gif quality (pixel sampling size) - 30 (poor) - 1 (best), default 16
         simGifMaxFrames?: number; // maximum number of frames, default 64
         simGifWidth?: number; // with in pixels for gif frames
-        autoWebUSBDownload?: boolean; // automatically prompt user for webusb download
         qrCode?: boolean; // generate QR code for shared urls
         importExtensionFiles?: boolean; // import extensions from files
         debugExtensionCode?: boolean; // debug extension and libs code in the Monaco debugger
@@ -387,6 +384,7 @@ declare namespace pxt {
         openProjectNewTab?: boolean; // allow opening project in a new tab
         openProjectNewDependentTab?: boolean; // allow opening project in a new tab -- connected
         tutorialExplicitHints?: boolean; // allow use explicit hints
+        errorList?: boolean; // error list experiment
     }
 
     interface SocialOptions {
@@ -800,7 +798,6 @@ declare namespace ts.pxtc {
         skipPxtModulesEmit?: boolean; // skip re-emit of pxt_modules/*
 
         syntaxInfo?: SyntaxInfo;
-        forceTranspile?: boolean;
 
         // decompiler only
         alwaysDecompileOnStart?: boolean;

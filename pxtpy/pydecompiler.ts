@@ -116,11 +116,30 @@ namespace pxt.py {
             if (!exp.getSourceFile())
                 return null
             let tsExp = exp.getText()
+
+            const tsSym = tc.getSymbolAtLocation(exp);
+            if (tsSym) {
+                tsExp = tc.getFullyQualifiedName(tsSym);
+            }
+
             let sym = symbols[tsExp]
             if (sym && sym.attributes.alias) {
                 return sym.attributes.alias
             }
             if (sym && sym.pyQName) {
+                if (sym.isInstance) {
+                    if (ts.isPropertyAccessExpression(exp)) {
+                        // If this is a property access on an instance, we should bail out
+                        // because the left-hand side might contain an expression
+                        return null;
+                    }
+
+                    // If the pyQname is "Array.append" we just want "append"
+                    const nameRegExp = new RegExp(`(?:^|\.)${sym.namespace}\.(.+)`);
+                    const match = nameRegExp.exec(sym.pyQName);
+                    if (match) return match[1];
+                }
+
                 return sym.pyQName
             }
             else if (tsExp in pxtc.ts2PyFunNameMap) {
@@ -221,17 +240,14 @@ namespace pxt.py {
         }
 
         function emitStmtWithNewlines(s: ts.Statement): string[] {
-            let out: string[] = [];
+            const out = emitStmt(s);
 
-            const comments = pxtc.decompiler.getCommentsForStatement(s, commentMap);
+            // get comments after emit so that child nodes get a chance to claim them
+            const comments = pxtc.decompiler.getCommentsForStatement(s, commentMap)
+                .map(emitComment)
+                .reduce((p, c) => p.concat(c), [])
 
-            for (const comment of comments) {
-                out.push(...emitComment(comment));
-            }
-
-            out = out.concat(emitStmt(s))
-
-            return out;
+            return comments.concat(out);
         }
 
         ///
@@ -967,9 +983,8 @@ namespace pxt.py {
                     break
                 allWords = newWords
             }
-            // 3. if there is only one word, add "on_" prefix
-            if (allWords.length == 1)
-                allWords = ["on", allWords[0]]
+            // 3. add an "on_" prefix
+            allWords = ["on", ...allWords]
 
             return allWords.join("_")
             function dedupWords(words: string[]): string[] {
@@ -1000,7 +1015,7 @@ namespace pxt.py {
         // use newlines to separate items
         function getCommaSep(exps: string[]): string[] {
             let res = exps.join(", ");
-            if (res.length > 60) {
+            if (res.length > 60 && exps.length > 1) {
                 return exps.map((el, i) => {
                     let sep = el.charAt(el.length - 1) == "," ? "" : ",";
                     if (i == 0) {

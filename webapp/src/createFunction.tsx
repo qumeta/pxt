@@ -144,12 +144,6 @@ export class CreateFunctionDialog extends data.Component<ISettingsProps, CreateF
         const { visible } = this.state;
         const actions: sui.ModalButton[] = [
             {
-                label: lf("Cancel"),
-                onclick: this.hide,
-                icon: "cancel",
-                className: "cancel lightgrey"
-            },
-            {
                 label: lf("Done"),
                 onclick: this.confirm,
                 icon: "check",
@@ -160,9 +154,10 @@ export class CreateFunctionDialog extends data.Component<ISettingsProps, CreateF
 
         return (
             <sui.Modal isOpen={visible} className="createfunction" size="large"
-                closeOnEscape={false} closeIcon={false} closeOnDimmerClick={false} closeOnDocumentClick={false}
+                closeOnEscape={false} closeIcon={true} closeOnDimmerClick={false} closeOnDocumentClick={false}
                 dimmer={true} buttons={actions} header={lf("Edit Function")}
                 modalDidOpen={this.modalDidOpen}
+                onClose={this.hide}
             >
                 <div>
                     <span className="ui text mobile only paramlabel">{lf("Add a parameter")}</span>
@@ -211,8 +206,13 @@ export class CreateFunctionDialog extends data.Component<ISettingsProps, CreateF
                 pxt.appTarget.runtime.functionsOptions &&
                 pxt.appTarget.runtime.functionsOptions.extraFunctionEditorTypes &&
                 Array.isArray(pxt.appTarget.runtime.functionsOptions.extraFunctionEditorTypes)) {
+
                 pxt.appTarget.runtime.functionsOptions.extraFunctionEditorTypes.forEach(t => {
-                    types.push(t);
+                    types.push({
+                        ...t,
+                        label: t.label && pxt.Util.rlf(`{id:type}${t.label}`),
+                        defaultName: t.defaultName && pxt.Util.rlf(`{id:var}${t.defaultName}`)
+                    })
                 });
             }
 

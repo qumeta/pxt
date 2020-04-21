@@ -7,12 +7,16 @@ var Day;
     Day["Friday"] = "Friday";
     Day["All"] = "All";
 })(Day || (Day = {}));
+var newslist = {
+    "title": "New live streams!",
+    "items": []
+};
 var lessons = [
     {
         "title": "Beginner micro:bit",
         "description": "Learn the basics of physical computing with the micro:bit!  Peli, a member of the MakeCode Team will take you through some beginner-level coding tutorials.",
         "url": "https://aka.ms/makecodemicrobitstream",
-        "img": "/static/online-learning/img/microbit-stream.jpg",
+        "img": "/static/online-learning/img/microbit-stream.png",
         "time": 9,
         "startDay": 25,
         "days": [Day.All]
@@ -21,7 +25,7 @@ var lessons = [
         "title": "Beginner Minecraft",
         "description": "If you have access to Minecraft: Education Edition at home, learn how to programmatically spawn mobs, control robots, and build structures! Peli, a member of the MakeCode Team will take you through some beginner-level coding tutorials.",
         "url": "https://aka.ms/makecodeminecraftstream",
-        "img": "/static/online-learning/img/minecraft-stream.jpg",
+        "img": "/static/online-learning/img/minecraft-stream.png",
         "time": 10,
         "startDay": 25,
         "days": [Day.All]
@@ -36,10 +40,19 @@ var lessons = [
         "days": [Day.All]
     },
     {
+        "title": "Digital All-Stars",
+        "description": "Join your favorite all-star athletes as they use MakeCode Arcade to code games with you at home!",
+        "url": "https://aka.ms/makecodeDASstream",
+        "img": "/static/online-learning/img/all-stars.png",
+        "time": 12,
+        "startDay": 2,
+        "days": [Day.Thursday]
+    },
+    {
         "title": "Advanced Arcade",
         "description": "Create new games (or recreate old ones) with a rotating cast of developers from the MakeCode team, including Richard, Shannon, Daryl, and Joey",
         "url": "https://aka.ms/makecodearcadestream",
-        "img": "/static/online-learning/img/arcade-stream.jpg",
+        "img": "/static/online-learning/img/arcade-stream.png",
         "time": 13,
         "startDay": 25,
         "days": [Day.All]
@@ -57,14 +70,38 @@ var lessons = [
         "title": "DreamSpace HomeSpace",
         "description": "Join Microsoft Ireland in their HomeSpace tutorial series on your favourite MakeCode platforms: micro:bit, Arcade and Minecraft.",
         "url": "https://aka.ms/dshomespace",
-        "img": "/static/online-learning/img/dreamspace-homespace.jpg",
+        "img": "/static/online-learning/img/dreamspace-homespace.png",
         "time": 6,
         "startDay": 30,
         "days": [Day.Monday, Day.Wednesday, Day.Friday]
     }
 ];
+makeNewsList();
 makeLessons();
-makeSchedule();
+function makeNewsList() {
+    if (newslist.items.length == 0) {
+        return;
+    }
+    var newsContainer = document.createElement("div");
+    newsContainer.innerHTML = "<h3>" + newslist.title + "</h3>";
+    for (var _i = 0, _a = newslist.items; _i < _a.length; _i++) {
+        var newsItem = _a[_i];
+        var streamlink = document.createElement("a");
+        streamlink.href = newsItem.url;
+        streamlink.text = newsItem.headline;
+        var headline = document.createElement("h4");
+        headline.appendChild(streamlink);
+        newsContainer.appendChild(headline);
+        var newsinfo = document.createElement("p");
+        for (var _b = 0, _c = newsItem.description; _b < _c.length; _b++) {
+            var newsline = _c[_b];
+            newsinfo.innerHTML += newsline;
+        }
+        newsContainer.appendChild(newsinfo);
+    }
+    var newsDiv = document.getElementById("news");
+    newsDiv.appendChild(newsContainer);
+}
 function makeSchedule() {
     var sorted = lessons.sort(function (a, b) { return a.time < b.time ? -1 : 1; });
     var parent = document.getElementById("schedule");
@@ -118,10 +155,13 @@ function makeLessons() {
         lesson.className = "lesson";
         var img = document.createElement("img");
         img.src = l.img;
+        var play = document.createElement("i");
+        play.className = "icon play";
         var wrapper = document.createElement("a");
         wrapper.className = "imgWrapper";
         wrapper.href = l.url;
         wrapper.appendChild(img);
+        wrapper.appendChild(play);
         lesson.appendChild(wrapper);
         var description = document.createElement("div");
         var title = document.createElement("a");
@@ -129,11 +169,6 @@ function makeLessons() {
         var header = document.createElement("h4");
         header.innerText = l.title;
         title.appendChild(header);
-        var time = document.createElement("div");
-        var ttime = document.createElement("span");
-        ttime.appendChild(document.createTextNode(formatTime(l.time)));
-        time.appendChild(ttime);
-        time.className = "time";
         var text = document.createElement("div");
         text.innerText = l.description;
         var ics = document.createElement("a");
@@ -142,7 +177,6 @@ function makeLessons() {
         ics.className = "ics";
         //time.appendChild(ics);
         description.appendChild(title);
-        description.appendChild(time);
         description.appendChild(text);
         lesson.appendChild(description);
         parent.appendChild(lesson);

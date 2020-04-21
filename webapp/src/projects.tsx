@@ -16,7 +16,6 @@ type ISettingsProps = pxt.editor.ISettingsProps;
 
 // This Component overrides shouldComponentUpdate, be sure to update that if the state is updated
 interface ProjectsState {
-    searchFor?: string;
     visible?: boolean;
     selectedCategory?: string;
     selectedIndex?: number;
@@ -43,7 +42,6 @@ export class Projects extends data.Component<ISettingsProps, ProjectsState> {
 
     shouldComponentUpdate(nextProps: ISettingsProps, nextState: ProjectsState, nextContext: any): boolean {
         return this.state.visible != nextState.visible
-            || this.state.searchFor != nextState.searchFor
             || this.state.selectedCategory != nextState.selectedCategory
             || this.state.selectedIndex != nextState.selectedIndex;
     }
@@ -186,10 +184,10 @@ export class Projects extends data.Component<ISettingsProps, ProjectsState> {
             <div key={`mystuff_gallerysegment`} className="ui segment gallerysegment mystuff-segment" role="region" aria-label={lf("My Projects")}>
                 <div className="ui heading">
                     <div className="column" style={{ zIndex: 1 }}>
-                        {targetTheme.scriptManager ? <h2 role="button" className="ui header myproject-header" title={lf("View all projects")} tabIndex={0}
+                        {targetTheme.scriptManager ? <h2 role="button" className="ui header myproject-header"
                             onClick={this.showScriptManager} onKeyDown={sui.fireClickOnEnter}>
                             {lf("My Projects")}
-                            <span className="view-all-button">
+                            <span className="view-all-button" tabIndex={0} title={lf("View all projects")}>
                                 {lf("View All")}
                             </span>
                         </h2> : <h2 className="ui header">{lf("My Projects")}</h2>}
