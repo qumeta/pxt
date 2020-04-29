@@ -17,6 +17,10 @@ namespace pxt.blocks {
         idToComments: Map<Blockly.WorkspaceComment[]>;
     }
 
+    interface PlaceholderLikeBlock extends Blockly.Block {
+        p?: Point;
+    }
+
     ///////////////////////////////////////////////////////////////////////////////
     // Miscellaneous utility functions
     ///////////////////////////////////////////////////////////////////////////////
@@ -185,8 +189,10 @@ namespace pxt.blocks {
     function returnType(e: Environment, b: Blockly.Block): Point {
         assert(b != null);
 
-        if (b.type == "placeholder" || b.type === pxtc.TS_OUTPUT_TYPE)
-            return find((<any>b).p);
+        if (isPlaceholderBlock(b)) {
+            if (!b.p) b.p = mkPoint(null);
+            return find(b.p);
+        }
 
         if (b.type == "variables_get")
             return find(lookup(e, b, b.getField("VAR").getText()).type);
@@ -1504,14 +1510,14 @@ namespace pxt.blocks {
                 else r = [mkStmt(compileExpression(e, b, comments))];
                 break;
         }
-        let l = r[r.length - 1]; if (l) l.id = b.id;
+        let l = r[r.length - 1]; if (l && !l.id) l.id = b.id;
 
         if (comments.length) {
             addCommentNodes(comments, r)
         }
 
         r.forEach(l => {
-            if (l.type === NT.Block || l.type === NT.Prefix && Util.startsWith(l.op, "//")) {
+            if ((l.type === NT.Block || l.type === NT.Prefix && Util.startsWith(l.op, "//")) && (b.type != pxtc.ON_START_TYPE || !l.id)) {
                 l.id = b.id
             }
         });
@@ -2557,5 +2563,9 @@ namespace pxt.blocks {
 
             return false;
         }
+    }
+
+    function isPlaceholderBlock(b: Blockly.Block): b is PlaceholderLikeBlock {
+        return b.type == "placeholder" || b.type === pxtc.TS_OUTPUT_TYPE;
     }
 }

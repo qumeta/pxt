@@ -248,6 +248,7 @@ namespace pxt.HF2 {
         bootloaderMode = false;
         reconnectTries = 0;
         autoReconnect = false;
+        icon = "usb";
         msgs = new U.PromiseBuffer<Uint8Array>()
         eventHandlers: pxt.Map<(buf: Uint8Array) => void> = {}
 
@@ -417,8 +418,7 @@ namespace pxt.HF2 {
             return this.io.reconnectAsync()
                 .then(() => this.flashAsync(blocks))
                 .then(() => Promise.delay(100))
-                .then(() => this.reconnectAsync())
-                .finally(() => this.flashing = false);
+                .finally(() => this.flashing = false)
         }
 
         writeWordsAsync(addr: number, words: number[]) {
