@@ -1,24 +1,39 @@
+@import 'themes/pxt/globals/site.variables';
+
+// Expanded error list
 .errorList {
     position: relative;
+    max-height: @errorListHeight;
+    min-height: @errorListHeight;
+    border-top: 2px @errorListBorderColor solid;
 
-    .errorListInner {
-        height: 200px;
-        border-top: 1px #e5e5e5 solid;
-        padding: 1em;
+    .errorListHeader {
+        padding: 0.75em 1em;
+        height: @errorListHeaderHeight;
+        margin-bottom: 0;
 
-        h4 {
-            margin-bottom: 0.5em;
+        &:hover {
+            cursor: pointer;
         }
 
-        .closeIcon {
+        h4 {
+            margin: 0;
+            display: inline-block;
+            vertical-align: middle;
+        }
+
+        .countBubble {
+            margin-left: 1em;
+        }
+
+        .toggleButton {
             float: right;
             cursor: pointer;
-            position: absolute;
-            top: 1em;
-            right: 0;
+            position: relative;
+            vertical-align: middle;
 
             i {
-                font-size: 2em;
+                font-size: 1.3em;
             }
 
             i:not(:hover) {
@@ -27,13 +42,46 @@
         }
     }
 
-    .errorListSummary {
-        height: unset;
+    .errorListInner {
+        height: @errorListInnerHeight;
+        padding: 0 0 1em 0;
+        overflow-y: auto;
 
-        .summaryMessage:hover {
-            cursor: pointer;
-            color: #00000067;
-            text-decoration: underline;
+        // errors
+        .ui.selection.list {
+            color: black;
+
+            .item {
+                border-radius: unset;
+                padding: 0.5em 1em;
+                color: black;
+
+                &:hover {
+                    background-color: @errorListMessageHoverColor;
+                }
+
+                &:nth-child(even):not(:hover) {
+                    background-color: @errorListEven;
+                }
+
+                &:nth-child(odd):not(:hover) {
+                    background-color: @errorListOdd;
+                }
+            }
         }
+
+        // exceptions
+        .exceptionMessage {
+            padding: 0.5em 1em;
+        }
+    }
+}
+
+// collapsed error list
+.errorList.errorListSummary {
+    min-height: unset;
+
+    &:hover {
+        background-color: @errorListMessageHoverColor;
     }
 }

@@ -565,7 +565,7 @@ export class ProjectsCarousel extends data.Component<ProjectsCarouselProps, Proj
                         {cards.map((scr, index) =>
                             <ProjectsCodeCard
                                 className="example"
-                                key={path + (scr.name || scr.url)}
+                                key={path + (scr.youTubeId || scr.name || scr.url)}
                                 name={scr.name}
                                 url={scr.url}
                                 imageUrl={scr.imageUrl}
@@ -1006,9 +1006,7 @@ export class ImportDialog extends data.Component<ISettingsProps, ImportDialogSta
     private async cloneGithub() {
         pxt.tickEvent("github.projects.clone", undefined, { interactiveConsent: true });
         this.hide();
-        await cloudsync.githubProvider().loginAsync();
-        if (pxt.github.token)
-            this.props.parent.showImportGithubDialog();
+        this.props.parent.showImportGithubDialog();
     }
 
     renderCore() {

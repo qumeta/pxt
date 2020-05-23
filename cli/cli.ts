@@ -45,8 +45,12 @@ function parseHwVariant(parsed: commandParser.ParsedCommand) {
         // map known variants
         const knowVariants: pxt.Map<string> = {
             "f4": "stm32f401",
+            "f401": "stm32f401",
             "d5": "samd51",
-            "p0": "rpi"
+            "d51": "samd51",
+            "p0": "rpi",
+            "pi0": "rpi",
+            "pi": "rpi"
         }
         hwvariant = knowVariants[hwvariant.toLowerCase()] || hwvariant;
         if (!/^hw---/.test(hwvariant)) hwvariant = 'hw---' + hwvariant;
@@ -1033,7 +1037,8 @@ function uploadCoreAsync(opts: UploadOptions) {
         "simulator.html",
         "sim.manifest",
         "sim.webmanifest",
-        "workerConfig.js"
+        "workerConfig.js",
+        "multi.html"
     ]
 
     nodeutil.mkdirP("built/uploadrepl")
@@ -2200,6 +2205,8 @@ function buildTargetCoreAsync(options: BuildTargetOptions = {}) {
             fillInCompilerExtension(cfg);
 
             const webmanifest = buildWebManifest(cfg)
+            cfg = U.clone(cfg)
+            cfg.compile.switches = {} // otherwise we leak the switches set with PXT_COMPILE_SWITCHES=
             const targetjson = nodeutil.stringify(cfg)
             nodeutil.writeFileSync("built/target.json", targetjson)
             nodeutil.writeFileSync("built/target.js", targetJsPrefix + targetjson)
@@ -3026,11 +3033,11 @@ export function serviceAsync(parsed: commandParser.ParsedCommand) {
     return mainPkg.getCompileOptionsAsync()
         .then(opts => {
             pxtc.service.performOperation("reset", {})
-            pxtc.service.performOperation("setOpts", { options: opts })
-            return pxtc.service.performOperation(parsed.args[0], {})
+            pxtc.service.performOperation("setOptions", { options: opts })
+            return pxtc.service.performOperation(parsed.args[0] as keyof pxtc.service.ServiceOps, {})
         })
         .then(res => {
-            if (res.errorMessage) {
+            if (pxtc.service.IsOpErr(res)) {
                 console.error("Error calling service:", res.errorMessage)
                 process.exit(1)
             } else {
@@ -4966,12 +4973,11 @@ export function hexdumpAsync(c: commandParser.ParsedCommand) {
     let filename = c.args[0]
     let buf = fs.readFileSync(filename)
     if (/^UF2\n/.test(buf.slice(0, 4).toString("utf8"))) {
-        let r = pxtc.UF2.toBin(buf as any)
-        if (r) {
-            console.log("UF2 file detected.")
-            console.log(pxtc.hexDump(r.buf, r.start))
-            return Promise.resolve()
+        for (let b of pxtc.UF2.parseFile(buf)) {
+            console.log(`UF2 Block: ${b.blockNo}/${b.numBlocks} family:${b.familyId.toString(16)} flags:${b.flags.toString(16)}\n` +
+                pxtc.hexDump(b.data, b.targetAddr))
         }
+        return Promise.resolve()
     }
     console.log("Binary file assumed.")
     console.log(pxtc.hexDump(buf))
@@ -5509,7 +5515,9 @@ function testGithubPackagesAsync(parsed: commandParser.ParsedCommand): Promise<v
         return Promise.resolve();
     }
     parseBuildInfo(parsed);
+    const fast = !!parsed.flags["fast"];
     const clean = !!parsed.flags["clean"];
+    const filterRx = parsed.args["filter"] && new RegExp(parsed.flags["filter"] as string);
     const targetConfig = nodeutil.readJson("targetconfig.json") as pxt.TargetConfig;
     const packages = targetConfig.packages;
     if (!packages) {
@@ -5517,7 +5525,9 @@ function testGithubPackagesAsync(parsed: commandParser.ParsedCommand): Promise<v
     }
     const pkgsroot = path.join("temp", "ghpkgs");
     const logfile = path.join(pkgsroot, "log.txt");
+    const errorfile = path.join(pkgsroot, "error.txt");
     nodeutil.writeFileSync(logfile, ""); // reset file
+    nodeutil.writeFileSync(errorfile, ""); // reset file
 
     function pxtAsync(dir: string, args: string[]) {
         return nodeutil.spawnAsync({
@@ -5528,19 +5538,20 @@ function testGithubPackagesAsync(parsed: commandParser.ParsedCommand): Promise<v
     }
 
     let errorCount = 0;
+    let warningCount = 0;
     function reportWarning(er: { repo: string; title: string; body: string; }) {
-        const msg = `- [ ]  [${er.repo}](https://github.com/${er.repo}) ${er.title} / [new issue](https://github.com/${er.repo}/issues/new?title=${encodeURIComponent(er.title)}&body=${encodeURIComponent(er.body)})`;
-        console.log(`warning: https://github.com/${er.repo} ${er.title}`)
-        fs.appendFileSync(logfile, msg + "\n");
+        reportLog(`warning: https://github.com/${er.repo} ${er.title}`)
+        const msg = `- [ ] warning: [${er.repo}](https://github.com/${er.repo}) ${er.title} / [new issue](https://github.com/${er.repo}/issues/new?title=${encodeURIComponent(er.title)}&body=${encodeURIComponent(er.body)})`;
+        fs.appendFileSync(errorfile, msg + "\n");
+        warningCount++;
     }
 
     function reportError(er: { repo: string; title: string; body: string; }) {
-        const msg = `- [ ]  [${er.repo}](https://github.com/${er.repo}) ${er.title} / [new issue](https://github.com/${er.repo}/issues/new?title=${encodeURIComponent(er.title)}&body=${encodeURIComponent(er.body)})`;
-        console.error(`error: https://github.com/${er.repo} ${er.title}`)
-        fs.appendFileSync(logfile, msg + "\n");
+        reportLog(`error: https://github.com/${er.repo} ${er.title}`)
+        const msg = `- [ ] error:  [${er.repo}](https://github.com/${er.repo}) ${er.title} / [new issue](https://github.com/${er.repo}/issues/new?title=${encodeURIComponent(er.title)}&body=${encodeURIComponent(er.body)})`;
+        fs.appendFileSync(errorfile, msg + "\n");
         errorCount++;
     }
-
     function reportLog(msg: any) {
         pxt.log(msg);
         fs.appendFileSync(logfile, msg + "\n");
@@ -5593,6 +5604,21 @@ function testGithubPackagesAsync(parsed: commandParser.ParsedCommand): Promise<v
         pxt.log('')
         reportLog(`${fullname}`)
 
+        const pkgdir = path.join(pkgsroot, fullname);
+        const buildlog = path.join(pkgdir, "built", "success.txt");
+        const errorlog = path.join(pkgdir, "built", "error.txt");
+        if (fast) {
+            if (nodeutil.fileExistsSync(buildlog)) {
+                reportLog(`${fullname} built already`);
+                return Promise.resolve();
+            }
+
+            if (nodeutil.fileExistsSync(errorlog)) {
+                reportError({ repo: fullname, title: "build error", body: nodeutil.readText(errorlog) })
+                return Promise.resolve();
+            }
+        }
+
         let delay = 1000;
         let retry = 0;
         return workAsync();
@@ -5608,6 +5634,7 @@ function testGithubPackagesAsync(parsed: commandParser.ParsedCommand): Promise<v
                             .then(() => workAsync());
                     }
                     reportError({ repo: fullname, title: "build error", body: e.message })
+                    nodeutil.writeFileSync(errorlog, e.message);
                     return Promise.resolve();
                 });
         }
@@ -5622,13 +5649,16 @@ function testGithubPackagesAsync(parsed: commandParser.ParsedCommand): Promise<v
         .then(fullnames => {
             // remove dups
             fullnames = U.unique(fullnames, f => f.toLowerCase());
+            // filter out
+            if (filterRx)
+                fullnames = fullnames.filter(fn => filterRx.test(fn))
             reportLog(`found ${fullnames.length} approved extensions`);
             reportLog(nodeutil.stringify(fullnames));
             return Promise.mapSeries(fullnames, nextAsync);
         })
         .then(() => {
             if (errorCount > 0) {
-                reportLog(`${errorCount} errors found`);
+                reportLog(`${errorCount} errors, ${warningCount} warnings`);
                 process.exit(1);
             }
         })
@@ -5738,8 +5768,13 @@ function initCommands() {
 The following environment variables modify the behavior of the CLI when set to
 non-empty string:
 
-PXT_DEBUG        - display extensive logging info
-PXT_USE_HID      - use webusb or hid to flash device
+PXT_DEBUG            - display extensive logging info
+PXT_USE_HID          - use webusb or hid to flash device
+PXT_COMPILE_SWITCHES - same as ?compile=... in the webapp, interesting options
+   PXT_COMPILE_SWITCHES=profile - enable profiling
+   PXT_COMPILE_SWITCHES=time    - print-out compilation times
+   PXT_COMPILE_SWITCHES=rawELF  - generate ELF files for Linux, without UF2 continer
+PXT_FORCE_GITHUB_PROXY - always using backend cloud to download github repositories
 
 These apply to the C++ runtime builds:
 
@@ -6267,8 +6302,10 @@ ${pxt.crowdin.KEY_VARIABLE} - crowdin key
                 description: "Build native image using local toolchains",
                 aliases: ["local", "l", "local-build", "lb"]
             },
-            clean: { description: "delete all previous repos" }
-        }
+            clean: { description: "delete all previous repos" },
+            fast: { description: "don't check tag" },
+            filter: { description: "regex filter for the package name", type: "string", argument: "filter" }
+        },
     }, testGithubPackagesAsync);
 
     p.defineCommand({
@@ -6415,6 +6452,7 @@ export function mainCli(targetDir: string, args: string[] = process.argv.slice(2
     fillInCompilerExtension(trg)
     pxt.setAppTarget(trg)
 
+    pxt.github.forceProxy = !!process.env["PXT_FORCE_GITHUB_PROXY"];
     pxt.setCompileSwitches(process.env["PXT_COMPILE_SWITCHES"])
     trg = pxt.appTarget
 

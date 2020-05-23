@@ -25,15 +25,15 @@
                 localStorage["core/oauthState"] = state;
                 localStorage["core/ghclassroomassigment"] = assignment;
                 const login = "https://makecode.com/oauth/login?state=" + state +
-                    "&response_type=token&client_id=gh-token&redirect_uri=" + encodeURIComponent(window.location.href.split('#', 1)[0])
+                    "&prompt=consent&response_type=token&client_id=gh-token&redirect_uri=" + encodeURIComponent(window.location.href.split('#', 1)[0])
                 window.location.href = login;
             }
 
             function redirectGithub() {
                 if (!keys["state"] || keys["state"] != localStorage["core/oauthState"]) {
-                        delete localStorage["core/oauthState"];
-                        delete localStorage["core/ghclassroomassigment"];
-                        throw new Error("invalid query");
+                    delete localStorage["core/oauthState"];
+                    delete localStorage["core/ghclassroomassigment"];
+                    throw new Error("invalid query");
                 }
 
                 const assignment = localStorage["core/ghclassroomassigment"];
@@ -83,11 +83,15 @@
         </h1>
         <div id="signin" class="ui segment hidden">
             <p>
-                In order to use MakeCode with GitHub Classroom, you will need to sign in with the <strong>Microsoft MakeCode with GitHub</strong>.
-                Click the button below to start this process.
+                In order to use <a href="https://makecode.com" target="_blank">Microsoft MakeCode</a> with <a
+                    href="https://classroom.github.com" target="_blank">GitHub Classroom</a>,
+                you need to <strong>grant access</strong> to the
+                <a href="https://github.com/settings/connections/applications/1919c4da46b6e87c4469"
+                    target="_blank">Microsoft MakeCode for GitHub</a> app
+                to your classroom organization.
             </p>
             <p>
-                <button class="ui primary button" id="signinbtn">Sign in with MakeCode</button>
+                <button class="ui green button" id="signinbtn">Authorize Microsoft MakeCode for GitHub</button>
             </p>
         </div>
         <p id="log">

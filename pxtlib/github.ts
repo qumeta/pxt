@@ -87,15 +87,15 @@ namespace pxt.github {
         return true
     }
 
-    function useProxy() {
+    function shouldUseProxy(force?: boolean) {
         if (forceProxy)
             return true;
-        if (token)
+        if (token && !force)
             return false
         return hasProxy();
     }
 
-    export let handleGithubNetworkError: (e: any) => boolean;
+    export let handleGithubNetworkError: (opts: U.HttpRequestOptions, e: any) => boolean;
 
     let isPrivateRepoCache: pxt.Map<boolean> = {};
 
@@ -109,35 +109,43 @@ namespace pxt.github {
         loadPackageAsync(repopath: string, tag: string): Promise<CachedPackage>;
     }
 
-    function ghRequestAsync(opts: U.HttpRequestOptions) {
-        if (token) {
-            if (!opts.headers) opts.headers = {}
-            if (opts.url == GRAPHQL_URL)
-                opts.headers['Authorization'] = `bearer ${token}`
-            else {
-                if (opts.url.indexOf('?') > 0)
-                    opts.url += "&"
-                else
-                    opts.url += "?"
-                opts.url += "anti_cache=" + Math.random()
-                opts.headers['Authorization'] = `token ${token}`
-            }
-        }
-        return U.requestAsync(opts)
-            .catch(e => {
-                if (handleGithubNetworkError) {
-                    const retry = handleGithubNetworkError(e)
-                    if (retry) return U.requestAsync(opts);
+    function ghRequestAsync(options: U.HttpRequestOptions) {
+        options.method = options.method ?? "GET";
+        // call github request with existing token
+        // if the request fails and the token is clear, try again with the token
+        return workAsync(!!token)
+
+        function workAsync(canRetry: boolean): Promise<U.HttpResponse> {
+            const opts = U.clone(options) as U.HttpRequestOptions;
+            if (token) {
+                if (!opts.headers) opts.headers = {}
+                if (opts.url == GRAPHQL_URL)
+                    opts.headers['Authorization'] = `bearer ${token}`
+                else {
+                    // defeat browser cache when signed in
+                    opts.url = pxt.BrowserUtils.cacheBustingUrl(opts.url);
+                    opts.headers['Authorization'] = `token ${token}`
                 }
-                throw e;
-            });
+            }
+            opts.allowHttpErrors = opts.allowHttpErrors ?? false;
+            return U.requestAsync(opts)
+                .catch(e => {
+                    pxt.tickEvent("github.error", { statusCode: e.statusCode });
+                    if (handleGithubNetworkError) {
+                        const retry = handleGithubNetworkError(opts, e)
+                        // retry if it may fix the issue
+                        if (retry) return workAsync(false);
+                    }
+                    throw e;
+                });
+        }
     }
 
     function ghGetJsonAsync(url: string) {
-        return ghRequestAsync({ url }).then(resp => resp.json)
+        return ghRequestAsync({ url, method: "GET" }).then(resp => resp.json)
     }
 
-    function ghProxyJsonAsync(path: string) {
+    function ghProxyWithCdnJsonAsync(path: string) {
         return Cloud.apiRequestWithCdnAsync({ url: "gh/" + path }).then(r => r.json)
     }
 
@@ -146,11 +154,16 @@ namespace pxt.github {
         pxt.debug(e);
     }
 
+    export function isOrgAsync(owner: string): Promise<boolean> {
+        return ghGetJsonAsync(`https://api.github.com/orgs/${owner}`)
+            .then(resp => resp.statusCode == 200);
+    }
+
     export class MemoryGithubDb implements IGithubDb {
         private configs: pxt.Map<pxt.PackageConfig> = {};
         private packages: pxt.Map<CachedPackage> = {};
 
-        private proxyLoadPackageAsync(repopath: string, tag: string): Promise<CachedPackage> {
+        private proxyWithCdnLoadPackageAsync(repopath: string, tag: string): Promise<CachedPackage> {
             // cache lookup
             const key = `${repopath}/${tag}`;
             let res = this.packages[key];
@@ -160,7 +173,7 @@ namespace pxt.github {
             }
 
             // load and cache
-            return ghProxyJsonAsync(`${repopath}/${tag}/text`)
+            return ghProxyWithCdnJsonAsync(`${repopath}/${tag}/text`)
                 .then(v => this.packages[key] = { files: v });
         }
 
@@ -185,7 +198,7 @@ namespace pxt.github {
             // try proxy if available
             if (hasProxy()) {
                 try {
-                    const gpkg = await this.proxyLoadPackageAsync(repopath, tag)
+                    const gpkg = await this.proxyWithCdnLoadPackageAsync(repopath, tag)
                     return this.cacheConfig(key, gpkg.files[pxt.CONFIG_NAME]);
                 } catch (e) {
                     ghProxyHandleException(e);
@@ -202,7 +215,7 @@ namespace pxt.github {
             // try using github proxy first
             if (hasProxy()) {
                 try {
-                    return await this.proxyLoadPackageAsync(repopath, tag).then(v => U.clone(v));
+                    return await this.proxyWithCdnLoadPackageAsync(repopath, tag).then(v => U.clone(v));
                 } catch (e) {
                     ghProxyHandleException(e);
                 }
@@ -249,7 +262,8 @@ namespace pxt.github {
 
     function fallbackDownloadTextAsync(repopath: string, commitid: string, filepath: string) {
         return ghRequestAsync({
-            url: "https://api.github.com/repos/" + repopath + "/contents/" + filepath + "?ref=" + commitid
+            url: "https://api.github.com/repos/" + repopath + "/contents/" + filepath + "?ref=" + commitid,
+            method: "GET"
         }).then(resp => {
             const f = resp.json as FileContent
             isPrivateRepoCache[repopath] = true
@@ -324,25 +338,15 @@ namespace pxt.github {
         tree: string; // sha
     }
 
-    function ghPostAsync(path: string, data: any, headers?: any, method?: string) {
+    function ghPostAsync(path: string, data: any, headers?: any, method?: string): Promise<any> {
+        // need to handle 204
         return ghRequestAsync({
             url: /^https:/.test(path) ? path : "https://api.github.com/repos/" + path,
             headers,
             method: method || "POST",
-            allowHttpErrors: true,
-            data: data
-        }).then(resp => {
-            if (resp.statusCode == 200 || resp.statusCode == 202 || resp.statusCode == 201 || resp.statusCode == 204)
-                return resp.json
-
-            let e = new Error(lf("Cannot create object at github.com/{0}; code: {1}",
-                path, resp.statusCode));
-            (<any>e).statusCode = resp.statusCode;
-            (<any>e).isUserError = true;
-            if (resp.statusCode == 404)
-                (<any>e).needsWritePermission = true;
-            throw e
-        })
+            data: data,
+            successCodes: [200, 201, 202, 204]
+        }).then(resp => resp.json);
     }
 
     export function createObjectAsync(repopath: string, type: string, data: any) {
@@ -358,7 +362,7 @@ namespace pxt.github {
     }
 
     export async function fastForwardAsync(repopath: string, branch: string, commitid: string) {
-        let resp = await ghRequestAsync({
+        const resp = await ghRequestAsync({
             url: "https://api.github.com/repos/" + repopath + "/git/refs/heads/" + branch,
             method: "PATCH",
             allowHttpErrors: true,
@@ -371,7 +375,7 @@ namespace pxt.github {
     }
 
     export async function putFileAsync(repopath: string, path: string, content: string) {
-        let resp = await ghRequestAsync({
+        await ghRequestAsync({
             url: "https://api.github.com/repos/" + repopath + "/contents/" + path,
             method: "PUT",
             allowHttpErrors: true,
@@ -379,10 +383,9 @@ namespace pxt.github {
                 message: lf("Initialize empty repo"),
                 content: btoa(U.toUTF8(content)),
                 branch: "master"
-            }
+            },
+            successCodes: [201]
         })
-        if (resp.statusCode != 201)
-            U.userError("PUT file failed")
     }
 
     export async function createTagAsync(repopath: string, tag: string, commitid: string) {
@@ -411,17 +414,18 @@ namespace pxt.github {
             base: baseBranch,
             maintainer_can_modify: true
         })
-        return res.html_url as string
+        return res?.html_url as string
     }
 
-    export function mergeAsync(repopath: string, branch: string, commitid: string) {
+    export function mergeAsync(repopath: string, base: string, head: string, message?: string) {
         return ghRequestAsync({
             url: "https://api.github.com/repos/" + repopath + "/merges",
             method: "POST",
-            allowHttpErrors: true,
+            successCodes: [201, 204, 409],
             data: {
-                base: branch,
-                head: commitid
+                base,
+                head,
+                commit_message: message
             }
         }).then(resp => {
             if (resp.statusCode == 201 || resp.statusCode == 204)
@@ -485,17 +489,18 @@ namespace pxt.github {
         return repoInfo.fullName + "#" + branchName
     }
 
-    export function listRefsAsync(repopath: string, namespace = "tags"): Promise<string[]> {
-        return listRefsExtAsync(repopath, namespace)
+    export function listRefsAsync(repopath: string, namespace = "tags", useProxy?: boolean, noCache?: boolean): Promise<string[]> {
+        return listRefsExtAsync(repopath, namespace, useProxy, noCache)
             .then(res => Object.keys(res.refs))
     }
 
-    export function listRefsExtAsync(repopath: string, namespace = "tags"): Promise<RefsResult> {
+    export function listRefsExtAsync(repopath: string, namespace = "tags", useProxy?: boolean, noCache?: boolean): Promise<RefsResult> {
+        const proxy = shouldUseProxy(useProxy);
         let head: string = null
-        const fetch = !useProxy() ?
-            ghGetJsonAsync("https://api.github.com/repos/" + repopath + "/git/refs/" + namespace + "/?per_page=100") :
-            // no CDN caching here
-            U.httpGetJsonAsync(`${pxt.Cloud.apiRoot}gh/${repopath}/refs`)
+        const fetch = !proxy ?
+            ghGetJsonAsync(`https://api.github.com/repos/${repopath}/git/refs/${namespace}/?per_page=100`) :
+            // no CDN caching here, bust browser cace
+            U.httpGetJsonAsync(pxt.BrowserUtils.cacheBustingUrl(`${pxt.Cloud.apiRoot}gh/${repopath}/refs${noCache ? "?nocache=1" : ""}`))
                 .then(r => {
                     let res = Object.keys(r.refs)
                         .filter(k => U.startsWith(k, "refs/" + namespace + "/"))
@@ -532,6 +537,7 @@ namespace pxt.github {
     }
 
     function tagToShaAsync(repopath: string, tag: string) {
+        // TODO  support fetching a tag
         if (/^[a-f0-9]{40}$/.test(tag))
             return Promise.resolve(tag)
         return ghGetJsonAsync("https://api.github.com/repos/" + repopath + "/git/refs/tags/" + tag)
@@ -557,7 +563,19 @@ namespace pxt.github {
             return Promise.resolve<CachedPackage>(undefined);
         }
 
-        return db.loadPackageAsync(p.fullName, p.tag);
+        return db.loadPackageAsync(p.fullName, p.tag)
+            .then(cached => {
+                const dv = upgradedDisablesVariants(config, repoWithTag)
+                if (dv) {
+                    const cfg = Package.parseAndValidConfig(cached.files[pxt.CONFIG_NAME])
+                    if (cfg) {
+                        pxt.log(`auto-disable ${dv.join(",")} due to targetconfig entry for ${repoWithTag}`)
+                        cfg.disablesVariants = dv
+                        cached.files[pxt.CONFIG_NAME] = Package.stringifyConfig(cfg)
+                    }
+                }
+                return cached
+            })
     }
 
     export interface User {
@@ -688,7 +706,9 @@ namespace pxt.github {
             has_issues: true, // default
             has_projects: false,
             has_wiki: false,
-            allow_rebase_merge: false
+            allow_rebase_merge: false,
+            allow_merge_commit: true,
+            delete_branch_on_merge: false // keep branches for naming purposes
         }).then(v => mkRepo(v, null))
     }
 
@@ -828,7 +848,7 @@ namespace pxt.github {
 
     function proxyRepoAsync(rid: ParsedRepo, status: GitRepoStatus): Promise<GitRepo> {
         // always use proxy
-        return ghProxyJsonAsync(`${rid.fullName}`)
+        return ghProxyWithCdnJsonAsync(`${rid.fullName}`)
             .then(meta => {
                 if (!meta) return undefined;
                 return {
@@ -855,9 +875,7 @@ namespace pxt.github {
             return Promise.all(repos.map(id => repoAsync(id.path, config)))
                 .then(rs => rs.filter(r => r && r.status != GitRepoStatus.Banned)); // allow deep links to github repos
 
-        let fetch = () => U.httpGetJsonAsync(`${pxt.Cloud.apiRoot}ghsearch/${appTarget.id}/${appTarget.platformid || appTarget.id}?q=`
-            + encodeURIComponent(query))
-
+        const fetch = () => U.httpGetJsonAsync(`${pxt.Cloud.apiRoot}ghsearch/${appTarget.id}/${appTarget.platformid || appTarget.id}?q=${encodeURIComponent(query)}`)
         return fetch()
             .then((rs: SearchResults) =>
                 rs.items.map(item => mkRepo(item, config))
@@ -937,7 +955,62 @@ namespace pxt.github {
         return stringifyRepo(gid);
     }
 
-    export function latestVersionAsync(path: string, config: PackagesConfig): Promise<string> {
+    function upgradeRule(cfg: PackagesConfig, id: string) {
+        if (!cfg || !cfg.upgrades)
+            return null
+        const parsed = parseRepoId(id)
+        if (!parsed) return null
+        return U.lookup(cfg.upgrades, parsed.fullName.toLowerCase())
+    }
+
+    function upgradedDisablesVariants(cfg: PackagesConfig, id: string) {
+        const upgr = upgradeRule(cfg, id)
+        const m = /^dv:(.*)/.exec(upgr)
+        if (m) {
+            const disabled = m[1].split(/,/)
+            if (disabled.some(d => !/^\w+$/.test(d)))
+                return null
+            return disabled
+        }
+        return null
+    }
+
+    export function upgradedPackageReference(cfg: PackagesConfig, id: string) {
+        const upgr = upgradeRule(cfg, id)
+        if (!upgr)
+            return null
+
+        const m = /^min:(.*)/.exec(upgr)
+        if (m && pxt.semver.parse(m[1])) {
+            const parsed = parseRepoId(id)
+            const minV = pxt.semver.parse(m[1])
+            const currV = pxt.semver.parse(parsed.tag)
+            if (currV && pxt.semver.cmp(currV, minV) < 0) {
+                parsed.tag = m[1]
+                pxt.debug(`upgrading ${id} to ${m[1]}`)
+                return stringifyRepo(parsed)
+            } else {
+                if (!currV)
+                    pxt.log(`not upgrading ${id} - cannot parse version`)
+                return null
+            }
+        } else {
+            // check if the rule looks valid at all
+            if (!upgradedDisablesVariants(cfg, id))
+                pxt.log(`invalid upgrade rule: ${id} -> ${upgr}`)
+        }
+
+        return id
+    }
+
+    export function upgradedPackageId(cfg: PackagesConfig, id: string) {
+        const dv = upgradedDisablesVariants(cfg, id)
+        if (dv)
+            return id + "?dv=" + dv.join(",")
+        return id
+    }
+
+    export function latestVersionAsync(path: string, config: PackagesConfig, useProxy?: boolean, noCache?: boolean): Promise<string> {
         let parsed = parseRepoId(path)
 
         if (!parsed) return Promise.resolve<string>(null);
@@ -945,7 +1018,7 @@ namespace pxt.github {
         return repoAsync(parsed.fullName, config)
             .then(scr => {
                 if (!scr) return undefined;
-                return listRefsExtAsync(scr.fullName, "tags")
+                return listRefsExtAsync(scr.fullName, "tags", useProxy, noCache)
                     .then(refsRes => {
                         let tags = Object.keys(refsRes.refs)
                         // only look for semver tags
@@ -983,6 +1056,7 @@ namespace pxt.github {
         repo: string;
         commit: pxt.github.Commit;
         isFork?: boolean;
+        mergeSha?: string;
     }
 
     export const GIT_JSON = ".git.json"
@@ -1007,6 +1081,10 @@ namespace pxt.github {
 
     export interface PullRequest {
         number: number;
+        url?: string;
+        title?: string;
+        base?: string;
+        isDraft?: boolean;
         state?: "OPEN" | "CLOSED" | "MERGED";
         mergeable?: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
     }
@@ -1028,6 +1106,9 @@ namespace pxt.github {
                     number
                     state
                     mergeable
+                    baseRefName
+                    url
+                    isDraft
                 }
             }
         }
@@ -1061,7 +1142,10 @@ namespace pxt.github {
                     return {
                         number: node.number,
                         mergeable: node.mergeable,
-                        state: node.state
+                        state: node.state,
+                        title: node.title,
+                        url: node.url,
+                        base: node.baseRefName
                     }
                 }
                 return {

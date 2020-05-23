@@ -1119,9 +1119,6 @@ namespace ts.pxtc {
         }
 
         function unhandled(n: Node, info?: string, code: number = 9202) {
-            // if we hit this, and are in debugger, we probably want to look at the node
-            debugger
-
             // If we have info then we may as well present that instead
             if (info) {
                 return userError(code, info)
@@ -2136,6 +2133,9 @@ ${lbl}: .short 0xffff
                 assert(args.length == 1, "args.length == 1")
                 return emitExpr(args[0])
             }
+
+            if (opts.target.shimRenames && U.lookup(opts.target.shimRenames, nm))
+                nm = opts.target.shimRenames[nm]
 
             if (opts.target.isNative) {
                 hexfile.validateShim(getDeclName(decl), nm, attrs, hasRet, args.map(isNumberLike))

@@ -228,23 +228,42 @@ export class ProjectView
         data.invalidate('pkg-git-pr');
         data.invalidate('pkg-git-pages')
 
+        // there is a race with another tab that has a lock on the device
+        // don't try to reconnect immediately as the other is still closing
+        // the webusb resources
+        const maybeReconnect = () => {
+            Promise.delay(3000).then(() => {
+                if (!this.state.home && document.visibilityState == 'visible')
+                    cmds.maybeReconnectAsync();
+            });
+        }
+
+        // disconnect devices to avoid locking between tabs
+        if (!active)
+            cmds.disconnectAsync(); // turn off any kind of logging
+
         if (!active && this.state.autoRun) {
             if (simulator.driver.state == pxsim.SimulatorState.Running) {
                 this.suspendSimulator();
                 this.setState({ resumeOnVisibility: true });
             }
             this.saveFileAsync().done();
-        } else {
+        } else if (active) {
+            data.invalidate("header:*")
             if (workspace.isHeadersSessionOutdated()
                 || workspace.isHeaderSessionOutdated(this.state.header)) {
                 pxt.debug('workspace: changed, reloading...')
                 let id = this.state.header ? this.state.header.id : '';
                 workspace.syncAsync()
                     .done(() => !this.state.home && id ? this.loadHeaderAsync(workspace.getHeader(id), this.state.editorState) : Promise.resolve());
+                // device scanning restarts in loadheader
             } else if (this.state.resumeOnVisibility) {
                 this.setState({ resumeOnVisibility: false });
                 // We did a save when the page was hidden, no need to save again.
                 this.runSimulator();
+                maybeReconnect()
+            } else if (!this.state.home) {
+                maybeReconnect();
             }
         }
     }
@@ -418,8 +437,6 @@ export class ProjectView
             else
                 this.setFile(mainpy);
         }
-        // update language pref
-        pxt.Util.setEditorLanguagePref("py");
     }
 
     openJavaScript(giveFocusOnLoading = true) {
@@ -584,17 +601,18 @@ export class ProjectView
                         mainPkg.cacheTranspile(fromLanguage, fromText, "py", mainpy);
                         return this.saveVirtualFileAsync(pxt.PYTHON_PROJECT_NAME, mainpy, true);
                     } else {
-                        // TODO python
                         this.editor.setDiagnostics(this.editorFile, snap);
-                        return Promise.resolve();
+                        return Promise.reject(new Error("Failed to convert to Python."));
                     }
                 })
-                .catch(e => {
+                .then(() => {
+                    // on success, update editor pref
+                    pxt.Util.setEditorLanguagePref("py");
+                }, e => {
                     pxt.reportException(e);
                     core.errorNotification(lf("Oops, something went wrong trying to convert your code."));
-                })
+                });
         }
-
         return core.showLoadingAsync("switchtopython", lf("switching to Python..."), convertPromise);
     }
 
@@ -720,7 +738,7 @@ export class ProjectView
     private markdownChangeHandler = Util.debounce(() => {
         if (this.state.currFile && /\.md$/i.test(this.state.currFile.name))
             this.setSideMarkdown(this.editor.getCurrentSource());
-    }, 4000, false);
+    }, 3000, false);
     private editorChangeHandler = Util.debounce(() => {
         if (!this.editor.isIncomplete()) {
             this.saveFileAsync().done(); // don't wait till save is done
@@ -763,14 +781,16 @@ export class ProjectView
             orphanException: brk => {
                 // TODO: start debugging session
                 // TODO: user friendly error message
-                core.warningNotification(lf("Program Error: {0}", brk.exceptionMessage));
+                //core.warningNotification(lf("Program Error: {0}", brk.exceptionMessage));
+                //this.currentEditor.onExceptionDetected(brk)
+                this.editor?.onExceptionDetected(brk)
             },
             highlightStatement: (stmt, brk) => {
                 if (this.state.debugging && !simulator.driver.areBreakpointsSet() && brk && !brk.exceptionMessage) {
                     // The simulator has paused on the first statement, so we need to send the breakpoints
                     // and continue
                     let breakpoints: number[];
-                    if (this.isAnyEditeableJavaScriptOrPackageActive()) {
+                    if (this.isAnyEditeableJavaScriptOrPackageActive() || this.isPythonActive()) {
                         breakpoints = this.textEditor.getBreakpoints();
                     }
                     else if (this.isBlocksActive()) {
@@ -1032,6 +1052,11 @@ export class ProjectView
             .then(() => this.reloadHeaderAsync())
     }
 
+    isSideDocExpanded(): boolean {
+        const sd = this.refs["sidedoc"] as container.SideDocs;
+        return !!sd && sd.isCollapsed();
+    }
+
     setSideMarkdown(md: string) {
         let sd = this.refs["sidedoc"] as container.SideDocs;
         if (!sd) return;
@@ -1065,6 +1090,8 @@ export class ProjectView
         // save and typecheck
         this.typecheckNow();
         // Notify tutorial content pane
+
+        this.stopPokeUserActivity();
         let tc = this.refs[ProjectView.tutorialCardId] as tutorial.TutorialCard;
         if (!tc) return;
         if (step > -1) {
@@ -1296,12 +1323,9 @@ export class ProjectView
                     })
                     .done()
 
+                // load side docs
                 const editorForFile = this.pickEditorFor(file);
-                const readme = main.lookupFile("this/README.md");
-                // no auto-popup when editing packages locally
-                if (!h.githubId && readme && readme.content && readme.content.trim())
-                    this.setSideMarkdown(readme.content);
-                else if (pkg.mainPkg && pkg.mainPkg.config && pkg.mainPkg.config.documentation)
+                if (pkg?.mainPkg?.config?.documentation)
                     this.setSideDoc(pkg.mainPkg.config.documentation, editorForFile == this.blocksEditor);
 
                 // update recentUse on the header
@@ -1894,12 +1918,13 @@ export class ProjectView
     ///////////////////////////////////////////////////////////
 
     openHome() {
-        const hasHome = !pxt.shell.isControllerMode();
+        const hasHome = !pxt.shell.isControllerMode()
+            && !pxt.appTarget.appTheme.lockedEditor;
         if (!hasHome) return;
 
         this.stopSimulator(true); // don't keep simulator around
         this.showKeymap(false); // close keymap if open
-        cmds.disconnectAsync(true); // turn off any kind of logging
+        cmds.disconnectAsync(); // turn off any kind of logging
         if (this.editor) this.editor.unloadFileAsync();
         // clear the hash
         pxt.BrowserUtils.changeHash("", true);
@@ -2232,10 +2257,6 @@ export class ProjectView
             );
     }
 
-    disconnectAsync(): Promise<void> {
-        return cmds.disconnectAsync(false);
-    }
-
     pairAsync(): Promise<void> {
         return cmds.pairAsync();
     }
@@ -2436,11 +2457,11 @@ export class ProjectView
                     if (simRestart) this.runSimulator();
                 })
                 .done();
-            } catch (e) {
-                this.setState({ compiling: false, isSaving: false });
-                pxt.reportException(e);
-                core.errorNotification(lf("Compilation failed, please try again."));
-            }
+        } catch (e) {
+            this.setState({ compiling: false, isSaving: false });
+            pxt.reportException(e);
+            core.errorNotification(lf("Compilation failed, please try again."));
+        }
     }
 
     overrideTypescriptFile(text: string) {
@@ -2530,11 +2551,13 @@ export class ProjectView
             this.startSimulator();
         }
         this.setState({ collapseEditorTools: false });
+        this.fireResize();
     }
 
     collapseSimulator() {
         simulator.hide(() => {
             this.setState({ collapseEditorTools: true });
+            this.fireResize();
         })
     }
 
@@ -2615,10 +2638,20 @@ export class ProjectView
 
     clearSerial() {
         this.serialEditor.clear()
-        const simIndicator = this.refs["simIndicator"] as serialindicator.SerialIndicator
-        const devIndicator = this.refs["devIndicator"] as serialindicator.SerialIndicator
-        if (simIndicator) simIndicator.clear()
-        if (devIndicator) devIndicator.clear()
+        this.simulatorSerialIndicator()?.clear();
+        this.deviceSerialIndicator()?.clear();
+        this.setState({
+            simSerialActive: false,
+            deviceSerialActive: false
+        })
+    }
+
+    simulatorSerialIndicator() {
+        return this.refs["simIndicator"] as serialindicator.SerialIndicator;
+    }
+
+    deviceSerialIndicator() {
+        return this.refs["devIndicator"] as serialindicator.SerialIndicator;
     }
 
     shouldStartSimulator(): boolean {
@@ -2718,7 +2751,7 @@ export class ProjectView
 
             if (!opts.background)
                 this.editor.beforeCompile();
-            if (this.state.tracing)
+            if (this.state.tracing && this.state.debugging)
                 opts.trace = true;
 
             if (opts.debug) {
@@ -2796,7 +2829,7 @@ export class ProjectView
 
     createGitHubRepositoryAsync(): Promise<void> {
         const { projectName, header } = this.state;
-        return cloudsync.githubProvider().createRepositoryAsync(projectName, header)
+        return cloudsync.githubProvider(true).createRepositoryAsync(projectName, header)
             .then(r => r && this.reloadHeaderAsync());
     }
 
@@ -3211,6 +3244,7 @@ export class ProjectView
                 });
         } else if (!!ghid && ghid.owner && ghid.project) {
             pxt.tickEvent("tutorial.github");
+            pxt.log(`loading tutorial from ${ghid.fullName}`)
             p = pxt.packagesConfigAsync()
                 .then(config => {
                     const status = pxt.github.repoStatus(ghid, config);
@@ -3224,9 +3258,17 @@ export class ProjectView
                             reportId = "https://github.com/" + ghid.fullName;
                             break;
                     }
-                    return pxt.github.downloadPackageAsync(ghid.fullName, config);
-                })
-                .then(gh => resolveMarkdown(ghid, gh.files));
+                    return (ghid.tag ? Promise.resolve(ghid.tag) : pxt.github.latestVersionAsync(ghid.fullName, config, true))
+                        .then(tag => {
+                            if (!tag) {
+                                pxt.log(`tutorial github tag not found at ${ghid.fullName}`);
+                                return undefined;
+                            }
+                            ghid.tag = tag;
+                            pxt.log(`tutorial ${ghid.fullName} tag: ${tag}`);
+                            return pxt.github.downloadPackageAsync(`${ghid.fullName}#${ghid.tag}`, config);
+                        });
+                }).then(gh => gh && resolveMarkdown(ghid, gh.files));
         } else if (header) {
             pxt.tickEvent("tutorial.header");
             temporary = true;
@@ -3249,7 +3291,8 @@ export class ProjectView
             };
         }).catch(e => {
             core.handleNetworkError(e);
-            core.errorNotification(lf("Oops, we could not load this activity."))
+            core.errorNotification(lf("Oops, we could not load this activity."));
+            this.openHome(); // don't stay stranded
         });
 
         function processMarkdown(md: string) {
@@ -3307,7 +3350,7 @@ export class ProjectView
             .then(r => {
                 const { filename, dependencies, temporary, reportId, autoChooseBoard, features, md } = (r || {});
                 if (!md)
-                    throw new Error(lf("Tutorial not found"));
+                    throw new Error(lf("Tutorial {0} not found", tutorialId));
 
                 const { options, editor: parsedEditor } = pxt.tutorial.getTutorialOptions(md, tutorialId, filename, reportId, !!recipe);
 
@@ -3330,8 +3373,10 @@ export class ProjectView
                     temporary: temporary
                 }).then(() => autoChooseBoard ? this.autoChooseBoardAsync(features) : Promise.resolve());
             }).catch((e) => {
-                core.errorNotification(lf("Please check your internet connection and check the tutorial is valid."));
-                core.handleNetworkError(e);
+                pxt.reportException(e, { tutorialId });
+                core.warningNotification(lf("Please check your internet connection and check the tutorial is valid."));
+                // go home if possible
+                this.openHome();
             })
             .finally(() => core.hideLoading("tutorial"));
     }
@@ -3709,15 +3754,20 @@ export class ProjectView
                     <div id="filelist" className="ui items">
                         <div id="boardview" className={`ui vertical editorFloat`} role="region" aria-label={lf("Simulator")} tabIndex={inHome ? -1 : 0}>
                         </div>
-                        <simtoolbar.SimulatorToolbar parent={this} />
+                        <simtoolbar.SimulatorToolbar
+                            parent={this}
+                            collapsed={this.state.collapseEditorTools}
+                            simSerialActive={this.state.simSerialActive}
+                            devSerialActive={this.state.deviceSerialActive}
+                        />
                         {this.state.keymap && simOpts.keymap && <keymap.Keymap parent={this} />}
                         <div className="ui item portrait hide hidefullscreen">
                             {pxt.options.debug ? <sui.Button key='hwdebugbtn' className='teal' icon="xicon chip" text={"Dev Debug"} onClick={this.hwDebug} /> : ''}
                         </div>
                         {useSerialEditor ?
                             <div id="serialPreview" className="ui editorFloat portrait hide hidefullscreen">
-                                <serialindicator.SerialIndicator ref="simIndicator" isSim={true} onClick={this.openSimSerial} />
-                                <serialindicator.SerialIndicator ref="devIndicator" isSim={false} onClick={this.openDeviceSerial} />
+                                <serialindicator.SerialIndicator ref="simIndicator" isSim={true} onClick={this.openSimSerial} parent={this} />
+                                <serialindicator.SerialIndicator ref="devIndicator" isSim={false} onClick={this.openDeviceSerial} parent={this} />
                             </div> : undefined}
                         {showFileList ? <filelist.FileList parent={this} /> : undefined}
                         {!isHeadless && <div id="filelistOverlay" role="button" title={lf("Open in fullscreen")} onClick={this.toggleSimulatorFullscreen}></div>}
@@ -3725,7 +3775,6 @@ export class ProjectView
                 </div>
                 <div id="maineditor" className={(sandbox ? "sandbox" : "") + (inDebugMode ? "debugging" : "")} role="main" aria-hidden={inHome}>
                     {showCollapseButton && <sui.Button id='computertogglesim' className={`computer only collapse-button large`} icon={`inverted chevron ${showRightChevron ? 'right' : 'left'}`} title={collapseIconTooltip} onClick={this.toggleSimulatorCollapse} />}
-                    {showCollapseButton && <sui.Button id='mobiletogglesim' className={`mobile tablet only collapse-button large ${!this.state.collapseEditorTools ? "toggle-hide" : ""}`} icon={`inverted chevron ${this.state.collapseEditorTools ? 'up' : 'down'}`} title={collapseIconTooltip} onClick={this.toggleSimulatorCollapse} />}
                     {this.allEditors.map(e => e.displayOuter(expandedStyle))}
                 </div>
                 {inHome ? <div id="homescreen" className="full-abs">
@@ -3737,9 +3786,7 @@ export class ProjectView
                         <projects.Projects parent={this} ref={this.handleHomeRef} />
                     </div>
                 </div> : undefined}
-                {showEditorToolbar ? <div id="editortools" role="complementary" aria-label={lf("Editor toolbar")}>
-                    <editortoolbar.EditorToolbar ref="editortools" parent={this} />
-                </div> : undefined}
+                {showEditorToolbar && <editortoolbar.EditorToolbar ref="editortools" parent={this} />}
                 {sideDocs ? <container.SideDocs ref="sidedoc" parent={this} sideDocsCollapsed={this.state.sideDocsCollapsed} docsUrl={this.state.sideDocsLoadUrl} /> : undefined}
                 {sandbox ? undefined : <scriptsearch.ScriptSearch parent={this} ref={this.handleScriptSearchRef} />}
                 {sandbox ? undefined : <extensions.Extensions parent={this} ref={this.handleExtensionRef} />}
@@ -3964,9 +4011,13 @@ function handleHash(hash: { cmd: string; arg: string }, loading: boolean): boole
             pxt.tickEvent("hash." + hash.cmd)
             let tutorialPath = hash.arg;
             let editorProjectName: string = undefined;
-            if (/^(js|py):/.test(tutorialPath)) {
-                editorProjectName = /^py:/.test(tutorialPath)
-                    ? pxt.PYTHON_PROJECT_NAME : pxt.JAVASCRIPT_PROJECT_NAME;
+            if (/^([jt]s|py|blocks?):/i.test(tutorialPath)) {
+                if (/^py:/i.test(tutorialPath))
+                    editorProjectName = pxt.PYTHON_PROJECT_NAME;
+                else if (/^[jt]s:/i.test(tutorialPath))
+                    editorProjectName = pxt.JAVASCRIPT_PROJECT_NAME;
+                else
+                    editorProjectName = pxt.BLOCKS_PROJECT_NAME;
                 tutorialPath = tutorialPath.substr(tutorialPath.indexOf(':') + 1)
             }
             editor.startActivity(hash.cmd, tutorialPath, undefined, editorProjectName);
@@ -4006,22 +4057,32 @@ function handleHash(hash: { cmd: string; arg: string }, loading: boolean): boole
             if (loading) pxt.BrowserUtils.changeHash("");
             return false;
         case "github": {
-            // #github:owner/user --> import
-            // #github:create-repository:headerid --> create repo
             const repoid = pxt.github.parseRepoId(hash.arg);
             const [ghCmd, ghArg] = hash.arg.split(':', 2);
-            if (ghCmd == "create-repository") {
+            pxt.BrowserUtils.changeHash("");
+            const provider = cloudsync.githubProvider();
+            if (!provider)
+                return false;
+            // #github:owner/user --> import
+            // #github:create-repository:headerid --> create repo
+            // #github:import -> import dialog
+            if (ghCmd === "create-repository") {
                 // #github:create-repository:HEADERID
-                pxt.BrowserUtils.changeHash("");
                 const hd = workspace.getHeader(ghArg);
                 if (hd) {
+                    // ignore if token is not set
+                    if (!provider.hasToken())
+                        return false;
                     theEditor.loadHeaderAsync(hd)
-                        .then(() => cloudsync.githubProvider().createRepositoryAsync(hd.name, hd))
+                        .then(() => provider.createRepositoryAsync(hd.name, hd))
                         .done(r => r && theEditor.reloadHeaderAsync())
                     return true;
                 }
+            }
+            else if (ghCmd === "import") {
+                dialogs.showImportGithubDialogAsync();
+                return true;
             } else if (repoid) {
-                pxt.BrowserUtils.changeHash("");
                 importGithubProject(hash.arg, true);
                 return true;
             }
@@ -4052,9 +4113,9 @@ function isProjectRelatedHash(hash: { cmd: string; arg: string }): boolean {
         case "edit":
         case "sandboxproject":
         case "project":
-        case "github":
         case "header":
             return true;
+        case "github":
         default:
             return false;
     }
@@ -4071,7 +4132,7 @@ async function importGithubProject(repoid: string, requireSignin?: boolean) {
         );
         if (!hd) {
             if (requireSignin) {
-                const token = await cloudsync.githubProvider().routedLoginAsync(repoid);
+                const token = await cloudsync.githubProvider(true).routedLoginAsync(repoid);
                 if (!token.accessToken) { // did not sign in, give up
                     theEditor.openHome();
                     return;
@@ -4212,6 +4273,7 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
+    pxt.setCompileSwitches(window.localStorage["compile"])
     pxt.setCompileSwitches(query["compiler"] || query["compile"])
 
     // github token set in cloud provider
@@ -4301,9 +4363,8 @@ document.addEventListener("DOMContentLoaded", () => {
         })
         .then(() => pxt.winrt.hasActivationProjectAsync())
         .then((hasWinRTProject) => {
-            if (theEditor.shouldShowHomeScreen() && !hasWinRTProject) {
-                return Promise.resolve();
-            } else {
+            const showHome = theEditor.shouldShowHomeScreen();
+            if (!showHome || hasWinRTProject) {
                 // Hide the home screen
                 theEditor.setState({ home: false });
             }
@@ -4313,6 +4374,8 @@ document.addEventListener("DOMContentLoaded", () => {
             if (hasWinRTProject) {
                 return pxt.winrt.loadActivationProject();
             }
+            if (showHome)
+                return Promise.resolve();
 
             // default handlers
             const ent = theEditor.settings.fileHistory.filter(e => !!workspace.getHeader(e.id))[0];
@@ -4336,6 +4399,8 @@ document.addEventListener("DOMContentLoaded", () => {
     window.addEventListener("unload", ev => {
         if (theEditor)
             theEditor.saveSettings()
+        // don't lock device while being away from tab
+        cmds.disconnectAsync();
     });
     window.addEventListener("resize", ev => {
         if (theEditor && theEditor.editor) {

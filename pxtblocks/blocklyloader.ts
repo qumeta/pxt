@@ -164,7 +164,7 @@ namespace pxt.blocks {
 
                 switch (isArray) {
                     case "number":
-                        fieldValues = ["1", "2", "3"];
+                        fieldValues = ["0", "1"];
                         break;
                     case "string":
                         fieldValues = ["a", "b", "c"];
@@ -1192,8 +1192,6 @@ namespace pxt.blocks {
             renameVar: function (oldName: string, newName: string) {
                 const varField = this.getField('VAR');
                 if (Blockly.Names.equals(oldName, varField.getText())) {
-
-                    varField.setText(newName);
                     varField.setValue(newName);
                 }
             },
@@ -1280,8 +1278,6 @@ namespace pxt.blocks {
             renameVar: function (oldName: string, newName: string) {
                 const varField = this.getField('VAR');
                 if (Blockly.Names.equals(oldName, varField.getText())) {
-
-                    varField.setText(newName);
                     varField.setValue(newName);
                 }
             },
@@ -1475,12 +1471,10 @@ namespace pxt.blocks {
         };
 
         // Use Blockly hook to customize context menu
-        (<any>Blockly).WorkspaceSvg.prototype.configureContextMenu = function (options: Blockly.ContextMenu.Option[]) {
+        (<any>Blockly).WorkspaceSvg.prototype.configureContextMenu = function (options: Blockly.ContextMenu.Option[], e: any) {
             if (this.options.readOnly || this.isFlyout) {
                 return;
             }
-            // Store workspace comment option
-            const commentOption = options.find(el => el.text.toLowerCase().includes("comment"));
 
             // Clear default Blockly options
             options.length = 0;
@@ -1491,7 +1485,7 @@ namespace pxt.blocks {
 
             // Option to add a workspace comment.
             if (this.options.comments && !BrowserUtils.isIE()) {
-                options.push(commentOption);
+                options.push(Blockly.ContextMenu.workspaceCommentOption(ws, e));
             }
 
 
@@ -3021,7 +3015,6 @@ namespace pxt.blocks {
             (varField as any).initModel();
             const model = (varField as any).getVariable();
             model.name = newName;
-            varField.setText(newName);
             varField.setValue(model.getId());
         }
     }

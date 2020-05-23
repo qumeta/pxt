@@ -606,6 +606,7 @@ namespace ts.pxtc.Util {
         allowGzipPost?: boolean;
         responseArrayBuffer?: boolean;
         forceLiveEndpoint?: boolean;
+        successCodes?: number[];
     }
 
     export interface HttpResponse {
@@ -616,18 +617,26 @@ namespace ts.pxtc.Util {
         json?: any;
     }
 
+    // debug flag
+    //export let debugHttpRequests = false;
     export function requestAsync(options: HttpRequestOptions): Promise<HttpResponse> {
+        //if (debugHttpRequests)
+        //    pxt.debug(`>> ${options.method || "GET"} ${options.url.replace(/[?#].*/, "...")}`); // don't leak secrets in logs
         return httpRequestCoreAsync(options)
             .then(resp => {
-                if ((resp.statusCode != 200 && resp.statusCode != 304) && !options.allowHttpErrors) {
-                    let msg = Util.lf("Bad HTTP status code: {0} at {1}; message: {2}",
+                //if (debugHttpRequests)
+                //    pxt.debug(`  << ${resp.statusCode}`);
+                const statusCode = resp.statusCode;
+                const successCodes = options.successCodes || [304, 200, 201, 202];
+                if (successCodes.indexOf(statusCode) < 0 && !options.allowHttpErrors) {
+                    const msg = Util.lf("Bad HTTP status code: {0} at {1}; message: {2}",
                         resp.statusCode, options.url, (resp.text || "").slice(0, 500))
-                    let err: any = new Error(msg)
+                    const err: any = new Error(msg)
                     err.statusCode = resp.statusCode
                     return Promise.reject(err)
                 }
                 if (resp.text && /application\/json/.test(resp.headers["content-type"] as string))
-                    resp.json = JSON.parse(resp.text)
+                    resp.json = U.jsonTryParse(resp.text)
                 return resp
             })
     }

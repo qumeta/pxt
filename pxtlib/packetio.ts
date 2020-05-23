@@ -71,12 +71,16 @@ namespace pxt.packetio {
         return !!wrapper && (wrapper.icon || "usb");
     }
 
+    let disconnectPromise: Promise<void>
     export function disconnectAsync(): Promise<void> {
-        log('disconnect')
+        if (disconnectPromise)
+            return disconnectPromise;
         let p = Promise.resolve();
         if (wrapper) {
-            p = p.then(() => wrapper.disconnectAsync())
-                .then(() => wrapper.io.disposeAsync())
+            log('disconnect')
+            const w = wrapper;
+            p = p.then(() => w.disconnectAsync())
+                .then(() => w.io.disposeAsync())
                 .catch(e => {
                     // swallow execeptions
                     pxt.reportException(e);
@@ -84,10 +88,12 @@ namespace pxt.packetio {
                 .finally(() => {
                     initPromise = undefined; // dubious
                     wrapper = undefined;
+                    disconnectPromise = undefined;
                 });
+            if (onConnectionChangedHandler)
+                p = p.then(() => onConnectionChangedHandler());
+            disconnectPromise = p;
         }
-        if (onConnectionChangedHandler)
-            p = p.then(() => onConnectionChangedHandler());
         return p;
     }
 
@@ -106,6 +112,11 @@ namespace pxt.packetio {
     function wrapperAsync(): Promise<PacketIOWrapper> {
         if (wrapper)
             return Promise.resolve(wrapper);
+
+        if (!mkPacketIOAsync) {
+            pxt.log(`packetio: not defined, skipping`)
+            return Promise.resolve(undefined);
+        }
 
         pxt.log(`packetio: new wrapper`)
         return mkPacketIOAsync()

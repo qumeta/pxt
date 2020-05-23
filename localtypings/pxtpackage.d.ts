@@ -40,7 +40,7 @@ declare namespace pxt {
         // url to icon -- support for built-in packages only
         icon?: string;
         // semver description for support target version
-        documentation?: string; // doc page to open when loading project
+        documentation?: string; // doc page to open when loading project, used by sidedocs
         targetVersions?: TargetVersions; // versions of the target/pxt the package was compiled against
         description?: string;
         dependencies: Map<string>;
@@ -85,6 +85,7 @@ declare namespace pxt {
         supportedTargets?: string[]; // a hint about targets in which this extension is supported
         firmwareUrl?: string; // link to documentation page about upgrading firmware
         disablesVariants?: string[]; // don't build these variants, when this extension is enabled
+        utf8?: boolean; // force compilation with UTF8 enabled
     }
 
     interface PackageExtension {

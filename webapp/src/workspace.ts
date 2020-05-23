@@ -468,26 +468,26 @@ export function fixupFileNames(txt: ScriptText) {
 
 const scriptDlQ = new U.PromiseQueue();
 const scripts = new db.Table("script"); // cache for published scripts
-//let scriptCache:any = {}
-export function getPublishedScriptAsync(id: string) {
-    //if (scriptCache.hasOwnProperty(id)) return Promise.resolve(scriptCache[id])
+export async function getPublishedScriptAsync(id: string) {
     if (pxt.github.isGithubId(id))
         id = pxt.github.normalizeRepoId(id)
-    let eid = encodeURIComponent(id)
-    return pxt.packagesConfigAsync()
-        .then(config => scriptDlQ.enqueue(id, () => scripts.getAsync(eid)
-            .then(v => v.files, e =>
-                (pxt.github.isGithubId(id) ?
-                    pxt.github.downloadPackageAsync(id, config).then(v => v.files) :
-                    Cloud.downloadScriptFilesAsync(id))
-                    .catch(core.handleNetworkError)
-                    .then(files => scripts.setAsync({ id: eid, files: files })
-                        .then(() => {
-                            //return (scriptCache[id] = files)
-                            return files
-                        })))
-            .then(fixupFileNames))
-        );
+    const config = await pxt.packagesConfigAsync()
+    const eid = encodeURIComponent(pxt.github.upgradedPackageId(config, id))
+    return await scriptDlQ.enqueue(eid, async () => {
+        let files: ScriptText
+        try {
+            files = (await scripts.getAsync(eid)).files
+        } catch {
+            if (pxt.github.isGithubId(id)) {
+                files = (await pxt.github.downloadPackageAsync(id, config)).files
+            } else {
+                files = await (Cloud.downloadScriptFilesAsync(id)
+                    .catch(core.handleNetworkError))
+            }
+            await scripts.setAsync({ id: eid, files: files })
+        }
+        return fixupFileNames(files)
+    })
 }
 
 export enum PullStatus {
@@ -513,7 +513,8 @@ export async function pullAsync(hd: Header, checkOnly = false) {
         return PullStatus.NoSourceControl
     let gitjson = JSON.parse(gitjsontext) as GitJson
     let parsed = pxt.github.parseRepoId(gitjson.repo)
-    const sha = await pxt.github.getRefAsync(parsed.fullName, parsed.tag)
+    const branch = parsed.tag;
+    const sha = await pxt.github.getRefAsync(parsed.fullName, branch)
     if (!sha) {
         // 404: branch does not exist, repo is gone or no rights to access repo
         // try to get the list of heads to see if we can access the project
@@ -536,7 +537,7 @@ export async function pullAsync(hd: Header, checkOnly = false) {
     }
 }
 
-export async function hasMergeConflictMarkers(hd: Header): Promise<boolean> {
+export async function hasMergeConflictMarkersAsync(hd: Header): Promise<boolean> {
     const files = await getTextAsync(hd.id)
     return !!Object.keys(files).find(k => pxt.diff.hasMergeConflictMarker(files[k]));
 }
@@ -663,6 +664,9 @@ export async function commitAsync(hd: Header, options: CommitOptions = {}) {
         parents: [gitjson.commit.sha],
         tree: treeId
     }
+    // we are in a merge
+    if (gitjson.mergeSha)
+        commit.parents.push(gitjson.mergeSha)
     let commitId = await pxt.github.createObjectAsync(parsed.fullName, "commit", commit)
     let ok = await pxt.github.fastForwardAsync(parsed.fullName, parsed.tag, commitId)
     let newCommit = commitId
@@ -688,7 +692,10 @@ export async function commitAsync(hd: Header, options: CommitOptions = {}) {
         })
         if (options.createRelease) {
             await pxt.github.createReleaseAsync(parsed.fullName, options.createRelease, newCommit)
-            await pxt.github.enablePagesAsync(parsed.fullName); // ensure pages are on
+            // ensure pages are on
+            await pxt.github.enablePagesAsync(parsed.fullName);
+            // clear the cloud cache
+            await pxt.github.listRefsAsync(parsed.fullName, "tags", true, true);
         }
         return ""
     }
@@ -749,6 +756,11 @@ export async function restoreCommitAsync(hd: Header, commit: pxt.github.CommitIn
         sha: commitId,
         files
     })
+}
+
+export async function mergeUpstreamAsync(hd: Header, base: string) {
+    // pull in all the changes
+    return Promise.resolve();
 }
 
 interface UpdateOptions {
@@ -892,6 +904,7 @@ async function githubUpdateToAsync(hd: Header, options: UpdateOptions) {
     }
 
     commit.tag = options.saveTag
+    gitjson.mergeSha = undefined
     gitjson.commit = commit
     files[GIT_JSON] = JSON.stringify(gitjson, null, 4)
 
@@ -1086,16 +1099,18 @@ export async function initializeGithubRepoAsync(hd: Header, repoid: string, forc
         // special handling of broken/missing/corrupted pxt.json
         if (!pxt.Package.parseAndValidConfig(currFiles[pxt.CONFIG_NAME]))
             delete currFiles[pxt.CONFIG_NAME];
-        // special case override README.md if empty
-        let templateREADME = templateFiles["README.md"];
-        if (currFiles["README.md"] && currFiles["README.md"].trim())
-            templateREADME = undefined;
+        // special case append README.md content: append to existing file
+        let templateREADME = templateFiles[pxt.README_FILE];
+        const currREADME = currFiles[pxt.README_FILE];
+        if (templateREADME || currREADME)
+            templateREADME = [currREADME, templateREADME].filter(s => !!s).join(`
+
+`);
         // current files override defaults
         U.jsonMergeFrom(templateFiles, currFiles);
         currFiles = templateFiles;
-
         if (templateREADME)
-            currFiles["README.md"] = templateREADME;
+            currFiles[pxt.README_FILE] = templateREADME;
     }
 
     // update config with files if needed
@@ -1105,7 +1120,7 @@ export async function initializeGithubRepoAsync(hd: Header, repoid: string, forc
     if (!files.filter(f => /\.ts$/.test(f)).length) {
         // add files from the template
         Object.keys(currFiles)
-            .filter(f => /\.(blocks|ts|py|asm|md)$/.test(f))
+            .filter(f => /\.(blocks|ts|py|asm|md|json)$/.test(f))
             .filter(f => f != pxt.CONFIG_NAME)
             .forEach(f => files.push(f));
     }
@@ -1165,11 +1180,12 @@ export async function importGithubAsync(id: string): Promise<Header> {
             forceTemplateFiles = false;
             // ask user before modifying project
             const r = await core.confirmAsync({
-                header: lf("Initialize repository for MakeCode?"),
-                body: lf("We need to add a few files to your repository to make it work with MakeCode.")
-                    + " "
-                    + lf("Your existing files will not be modified."),
-                agreeLbl: lf("Ok")
+                header: lf("Initialize GitHub repository for MakeCode?"),
+                body: lf("We need to add a few files to your GitHub repository to make it work with MakeCode."),
+                agreeLbl: lf("Ok"),
+                hideCancel: true,
+                hasCloseIcon: true,
+                helpUrl: "/github/import"
             })
             if (!r) return Promise.resolve(undefined);
         }

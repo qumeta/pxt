@@ -68,6 +68,7 @@ namespace ts.pxtc {
         isMemberCompletion: boolean;
         isNewIdentifierLocation: boolean;
         isTypeLocation: boolean;
+        namespace: string[];
     }
 
     export interface LocationInfo {
@@ -1470,6 +1471,9 @@ namespace ts.pxtc {
                     setWord(currBlock, 20, f.blocks.length)
                     setWord(currBlock, 28, f.familyId)
                     setWord(currBlock, 512 - 4, UF2_MAGIC_END)
+                    // if bytes are not written, leave them at erase value
+                    for (let i = 32; i < 32 + 256; ++i)
+                        currBlock[i] = 0xff
                     if (f.filename) {
                         U.memcpy(currBlock, 32 + 256, U.stringToUint8Array(U.toUTF8(f.filename)))
                     }

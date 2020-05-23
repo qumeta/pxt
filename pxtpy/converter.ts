@@ -538,7 +538,9 @@ namespace pxt.py {
         t0 = find(t0)
         t1 = find(t1)
 
-        if (t0 === t1)
+        // We don't handle generic types yet, so bail out. Worst case
+        // scenario is that we infer some extra types as "any"
+        if (t0 === t1 || isGenericType(t0) || isGenericType(t1))
             return
 
         if (t0.primType === "any") {
@@ -569,6 +571,10 @@ namespace pxt.py {
             // detect late unifications
             // if (currIteration > 2) error(a, `unify ${t2s(t0)} ${t2s(t1)}`)
         }
+    }
+
+    function isGenericType(t: Type) {
+        return !!(t?.primType?.startsWith("'"));
     }
 
     function mkSymbol(kind: SK, qname: string): SymbolInfo {
@@ -679,7 +685,7 @@ namespace pxt.py {
         for (let ct of constructorTypes) {
             let f = getClassField(ct, n, checkOnly)
             if (f) {
-                let isModule = !!ct.moduleTypeMarker
+                let isModule = !!recvType.moduleType
                 if (isModule) {
                     if (f.isInstance)
                         error(null, 9505, U.lf("the field '{0}' of '{1}' is not static", n, ct.pyQName))
@@ -1105,9 +1111,10 @@ namespace pxt.py {
                 else
                     nodes.push(B.mkText("export function "), quote(funname))
             }
+            let retType = n.returns ? compileType(n.returns) : sym.pyRetType;
             nodes.push(
                 doArgs(n, isMethod),
-                n.returns ? typeAnnot(compileType(n.returns)) : B.mkText(""))
+                retType && find(retType) != tpVoid ? typeAnnot(retType) : B.mkText(""))
 
             // make sure type is initialized
             getOrSetSymbolType(sym)
@@ -1952,6 +1959,7 @@ namespace pxt.py {
 
             if (isCallTo(n, "str")) {
                 // Our standard method of toString in TypeScript is to concatenate with the empty string
+                unify(n, n.tsType!, tpString);
                 return B.mkInfix(B.mkText(`""`), "+", expr(n.args[0]))
             }
 
@@ -2141,6 +2149,7 @@ namespace pxt.py {
         },
         Subscript: (n: py.Subscript) => {
             if (n.slice.kind == "Index") {
+                unifyTypeOf(n, typeOf(n.value));
                 let idx = (n.slice as py.Index).value
                 if (currIteration > 2 && isFree(typeOf(idx))) {
                     unifyTypeOf(idx, tpNumber)
@@ -2152,6 +2161,7 @@ namespace pxt.py {
                     B.mkText("]"),
                 ])
             } else if (n.slice.kind == "Slice") {
+                unifyTypeOf(n, typeOf(n.value));
                 let s = n.slice as py.Slice
                 return B.mkInfix(expr(n.value), ".",
                     B.H.mkCall("slice", [s.lower ? expr(s.lower) : B.mkText("0"),
@@ -2341,8 +2351,13 @@ namespace pxt.py {
             && sym.modifier === undefined
             && (sym.lastRefPos! > sym.forVariableEndPos!
                 || sym.firstRefPos! < sym.firstAssignPos!
-                || sym.firstAssignDepth! > scope.blockDepth!);
+                || sym.firstAssignDepth! > scope.blockDepth!)
+            && !(isTopLevelScope(scope) && sym.firstAssignDepth! === 0);
         return !!result
+    }
+
+    function isTopLevelScope(scope: py.ScopeDef) {
+        return scope.kind === "Module" && (scope as py.Module).name === "main";
     }
 
     // TODO look at scopes of let
